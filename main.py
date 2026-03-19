@@ -72,7 +72,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"<a href=\"{cleaned_url}\">{cleaned_url}</a>"
             )
 
-        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\nFailure to do so may result in your message being deleted."
+        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
         await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
 
 def main():
