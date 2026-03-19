@@ -65,25 +65,30 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<a href=\"{cleaned}\">{cleaned}</a>"
             for cleaned, off in offending
         ]
-        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
+        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines)
         bot_msg = await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
-        # store mapping
-        BOT_REPLIES[update.message.message_id] = bot_msg.message_id
+        
+        # store mapping per chat
+        chat_id = update.message.chat_id
+        BOT_REPLIES.setdefault(chat_id, {})[update.message.message_id] = bot_msg.message_id
 
 async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.edited_message or not update.edited_message.text:
         return
 
     offending = find_offending_urls(update.edited_message.text)
+    chat_id = update.edited_message.chat_id
     user_msg_id = update.edited_message.message_id
 
-    # If user fixed the issues, delete previous bot reply
-    if user_msg_id in BOT_REPLIES and not offending:
-        bot_msg_id = BOT_REPLIES.pop(user_msg_id)
-        try:
-            await context.bot.delete_message(chat_id=update.edited_message.chat_id, message_id=bot_msg_id)
-        except Exception:
-            pass  # already deleted or cannot delete
+    if chat_id in BOT_REPLIES and user_msg_id in BOT_REPLIES[chat_id]:
+        bot_msg_id = BOT_REPLIES[chat_id][user_msg_id]
+        if not offending:
+            try:
+                await context.bot.delete_message(chat_id=chat_id, message_id=bot_msg_id)
+                # remove from mapping
+                del BOT_REPLIES[chat_id][user_msg_id]
+            except Exception:
+                pass
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
