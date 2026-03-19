@@ -120,7 +120,7 @@ async def handle_all_messages(update: Update, context: ContextTypes.DEFAULT_TYPE
 
             reply_text = (
                 "Please edit your comment to remove the tracking parameters:\n\n"
-                + "\n\n".join(lines) + "\n\n".join(lines) + "\n\nFailure to do so may result in your message being deleted."
+                + "\n\n".join(lines) + "\n\nFailure to do so may result in your message being deleted."
             )
 
             bot_msg = await message.reply_text(
