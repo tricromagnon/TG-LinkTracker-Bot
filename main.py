@@ -6,10 +6,8 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 
 TOKEN = os.getenv("BOT_TOKEN")
 
-# Regex to extract URLs
 URL_REGEX = re.compile(r"(https?://\S+)")
 
-# Domains and their tracking parameters
 PLATFORMS = {
     "youtube": {
         "domains": {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"},
@@ -29,13 +27,12 @@ PLATFORMS = {
     }
 }
 
+# Mapping: {user_message_id: bot_message_id}
+BOT_REPLIES = {}
+
 def clean_url(url: str, tracking_params: list[str]) -> list[tuple[str, str]]:
-    """
-    Returns list of tuples: (cleaned_url, offending_param=VALUE) for first offending param per URL.
-    """
     parsed = urlparse(url)
     query = parse_qs(parsed.query)
-
     for param in tracking_params:
         if param in query:
             offending = f"{param}={query[param][0]}"
@@ -45,39 +42,56 @@ def clean_url(url: str, tracking_params: list[str]) -> list[tuple[str, str]]:
             return [(cleaned_url, offending)]
     return []
 
+def find_offending_urls(text: str) -> list[tuple[str, str]]:
+    urls = URL_REGEX.findall(text)
+    results = []
+    for url in urls:
+        parsed = urlparse(url)
+        domain = parsed.netloc.lower()
+        for platform, data in PLATFORMS.items():
+            if domain in data["domains"]:
+                offending_info = clean_url(url, data["tracking_params"])
+                results.extend(offending_info)
+    return results
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
 
-    text = update.message.text
-    urls = URL_REGEX.findall(text)
-    messages = []
+    offending = find_offending_urls(update.message.text)
+    if offending:
+        reply_lines = [
+            f"Tracking section '<b>{off}</b>' found. Cleaned URL: "
+            f"<a href=\"{cleaned}\">{cleaned}</a>"
+            for cleaned, off in offending
+        ]
+        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
+        bot_msg = await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
+        # store mapping
+        BOT_REPLIES[update.message.message_id] = bot_msg.message_id
 
-    for url in urls:
-        parsed = urlparse(url)
-        domain = parsed.netloc.lower()
+async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not update.edited_message or not update.edited_message.text:
+        return
 
-        for platform, data in PLATFORMS.items():
-            if domain in data["domains"]:
-                offending_info = clean_url(url, data["tracking_params"])
-                for cleaned_url, offending in offending_info:
-                    messages.append((offending, cleaned_url))
+    offending = find_offending_urls(update.edited_message.text)
+    user_msg_id = update.edited_message.message_id
 
-    if messages:
-        # Build one reply message
-        reply_lines = []
-        for offending, cleaned_url in messages:
-            reply_lines.append(
-                f"Tracking section '<b>{offending}</b>' found. Cleaned URL: "
-                f"<a href=\"{cleaned_url}\">{cleaned_url}</a>"
-            )
-
-        reply_text = "<b>Please edit your comment to remove the tracking parameters.</b>\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
-        await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
+    # If user fixed the issues, delete previous bot reply
+    if user_msg_id in BOT_REPLIES and not offending:
+        bot_msg_id = BOT_REPLIES.pop(user_msg_id)
+        try:
+            await context.bot.delete_message(chat_id=update.edited_message.chat_id, message_id=bot_msg_id)
+        except Exception:
+            pass  # already deleted or cannot delete
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
+
+    # New messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    # Edited messages
+    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.TEXT, handle_edited_message))
 
     print("Bot running...")
     app.run_polling()
