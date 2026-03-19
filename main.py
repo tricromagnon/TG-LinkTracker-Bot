@@ -27,7 +27,7 @@ PLATFORMS = {
     }
 }
 
-# Mapping: {user_message_id: bot_message_id}
+# Mapping: {chat_id: {user_message_id: bot_message_id}}
 BOT_REPLIES = {}
 
 def clean_url(url: str, tracking_params: list[str]) -> list[tuple[str, str]]:
@@ -50,8 +50,7 @@ def find_offending_urls(text: str) -> list[tuple[str, str]]:
         domain = parsed.netloc.lower()
         for platform, data in PLATFORMS.items():
             if domain in data["domains"]:
-                offending_info = clean_url(url, data["tracking_params"])
-                results.extend(offending_info)
+                results.extend(clean_url(url, data["tracking_params"]))
     return results
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -66,8 +65,10 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             for cleaned, off in offending
         ]
         reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
-        bot_msg = await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
-        
+        bot_msg = await update.message.reply_text(
+            reply_text, parse_mode="HTML", disable_web_page_preview=True
+        )
+
         # store mapping per chat
         chat_id = update.message.chat_id
         BOT_REPLIES.setdefault(chat_id, {})[update.message.message_id] = bot_msg.message_id
@@ -78,23 +79,26 @@ async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TY
 
     chat_id = update.edited_message.chat_id
     user_msg_id = update.edited_message.message_id
+    user_name = update.edited_message.from_user.full_name
 
-    # Re-scan edited message for any offending parameters
     offending = find_offending_urls(update.edited_message.text)
 
-    # If no offending parameters remain, delete bot message
+    # If bot previously replied and user fixed the issues
     if chat_id in BOT_REPLIES and user_msg_id in BOT_REPLIES[chat_id]:
         bot_msg_id = BOT_REPLIES[chat_id][user_msg_id]
         if not offending:
             try:
-                # Delete the bot reply
-                await context.bot.delete_message(chat_id=chat_id, message_id=bot_msg_id)
-                # Remove from mapping
+                # Edit bot message instead of deleting
+                await context.bot.edit_message_text(
+                    chat_id=chat_id,
+                    message_id=bot_msg_id,
+                    text=f"Thank you {user_name} for removing the trackers."
+                )
+                # Remove from mapping since the issue is fixed
                 del BOT_REPLIES[chat_id][user_msg_id]
             except Exception as e:
-                # Could log the exception for debugging
-                print(f"Failed to delete bot message: {e}")
-                
+                print(f"Failed to edit bot message: {e}")
+
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
@@ -108,3 +112,4 @@ def main():
 
 if __name__ == "__main__":
     main()
+
