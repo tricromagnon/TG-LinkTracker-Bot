@@ -17,7 +17,7 @@ PLATFORMS = {
         "domains": {"facebook.com", "www.facebook.com", "fb.watch", "l.facebook.com"},
         "tracking_params": ["fbclid"]
     },
-    "x": {  # Twitter/X
+    "x": {
         "domains": {"twitter.com", "www.twitter.com", "x.com", "www.x.com", "t.co"},
         "tracking_params": ["t", "s", "ref_src", "ref_url"]
     },
@@ -27,89 +27,89 @@ PLATFORMS = {
     }
 }
 
-# Mapping: {chat_id: {user_message_id: bot_message_id}}
-BOT_REPLIES = {}
 
-def clean_url(url: str, tracking_params: list[str]) -> list[tuple[str, str]]:
-    parsed = urlparse(url)
-    query = parse_qs(parsed.query)
-    for param in tracking_params:
-        if param in query:
-            offending = f"{param}={query[param][0]}"
-            query.pop(param)
-            clean_query = urlencode(query, doseq=True)
-            cleaned_url = urlunparse(parsed._replace(query=clean_query))
-            return [(cleaned_url, offending)]
-    return []
+def extract_urls(text: str):
+    return URL_REGEX.findall(text)
 
-def find_offending_urls(text: str) -> list[tuple[str, str]]:
-    urls = URL_REGEX.findall(text)
+
+def find_offending_urls(text: str):
+    urls = extract_urls(text)
     results = []
+
     for url in urls:
         parsed = urlparse(url)
         domain = parsed.netloc.lower()
+        query = parse_qs(parsed.query)
+
         for platform, data in PLATFORMS.items():
             if domain in data["domains"]:
-                results.extend(clean_url(url, data["tracking_params"]))
+                for param in data["tracking_params"]:
+                    if param in query:
+                        offending = f"{param}={query[param][0]}"
+                        # remove only that param
+                        query_copy = query.copy()
+                        query_copy.pop(param)
+
+                        clean_query = urlencode(query_copy, doseq=True)
+                        cleaned_url = urlunparse(parsed._replace(query=clean_query))
+
+                        results.append((offending, cleaned_url))
+                        break  # only first offending param per URL
+
     return results
 
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.message or not update.message.text:
+
+async def process_message(message, context: ContextTypes.DEFAULT_TYPE):
+    if not message or not message.text:
         return
 
-    offending = find_offending_urls(update.message.text)
+    offending = find_offending_urls(message.text)
+    user_name = message.from_user.full_name
+
+    # CASE 1: Offending links exist
     if offending:
-        reply_lines = [
-            f"Tracking section '<b>{off}</b>' found. Cleaned URL: "
-            f"<a href=\"{cleaned}\">{cleaned}</a>"
-            for cleaned, off in offending
-        ]
-        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
-        bot_msg = await update.message.reply_text(
-            reply_text, parse_mode="HTML", disable_web_page_preview=True
+        lines = []
+        for off, cleaned in offending:
+            lines.append(
+                f"Tracking section '<b>{off}</b>' found.\n"
+                f"Cleaned URL: <a href=\"{cleaned}\">{cleaned}</a>"
+            )
+
+        reply_text = (
+            "Please edit your comment to remove the tracking parameters:\n\n"
+            + "\n\n".join(lines) + "\n\nFailure to do so may result in your message being deleted."
         )
 
-        # store mapping per chat
-        chat_id = update.message.chat_id
-        BOT_REPLIES.setdefault(chat_id, {})[update.message.message_id] = bot_msg.message_id
+        await message.reply_text(
+            reply_text,
+            parse_mode="HTML",
+            disable_web_page_preview=True
+        )
+
+    # CASE 2: Message is clean AND was edited
+    elif message.edit_date:
+        await message.reply_text(
+            f"Thank you {user_name} for removing the trackers."
+        )
+
+
+async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await process_message(update.message, context)
+
 
 async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if not update.edited_message or not update.edited_message.text:
-        return
+    await process_message(update.edited_message, context)
 
-    chat_id = update.edited_message.chat_id
-    user_msg_id = update.edited_message.message_id
-    user_name = update.edited_message.from_user.full_name
-
-    offending = find_offending_urls(update.edited_message.text)
-
-    # If bot previously replied and user fixed the issues
-    if chat_id in BOT_REPLIES and user_msg_id in BOT_REPLIES[chat_id]:
-        bot_msg_id = BOT_REPLIES[chat_id][user_msg_id]
-        if not offending:
-            try:
-                # Edit bot message instead of deleting
-                await context.bot.edit_message_text(
-                    chat_id=chat_id,
-                    message_id=bot_msg_id,
-                    text=f"Thank you {user_name} for removing the trackers."
-                )
-                # Remove from mapping since the issue is fixed
-                del BOT_REPLIES[chat_id][user_msg_id]
-            except Exception as e:
-                print(f"Failed to edit bot message: {e}")
 
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
-    # New messages
     app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    # Edited messages
-    app.add_handler(MessageHandler(filters.UpdateType.EDITED_MESSAGE & filters.TEXT, handle_edited_message))
+    app.add_handler(MessageHandler(filters.TEXT & filters.UpdateType.EDITED_MESSAGE, handle_edited_message))
 
     print("Bot running...")
     app.run_polling()
 
+
 if __name__ == "__main__":
     main()
-
