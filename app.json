@@ -1,0 +1,10 @@
+{
+    "name": "LinkTrackerBOT",
+    "description": "A telegram bot that flags links containing tracking.",
+    "env": {
+        "BOT_TOKEN": {
+            "description": "Telegram bot token",
+            "required": true
+        }
+    }
+}
