@@ -5,8 +5,6 @@ from telegram import Update
 from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filters
 
 TOKEN = os.getenv("BOT_TOKEN")
-if not TOKEN:
-    raise ValueError("BOT_TOKEN not set")
 
 # Regex to extract URLs
 URL_REGEX = re.compile(r"(https?://\S+)")
