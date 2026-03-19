@@ -7,24 +7,38 @@ from telegram.ext import ApplicationBuilder, MessageHandler, ContextTypes, filte
 
 TOKEN = os.getenv("BOT_TOKEN")
 
+print("STARTING BOT...")
+print("TOKEN:", "SET" if TOKEN else "MISSING")
+
 URL_REGEX = re.compile(r"(https?://\S+)")
 
 STORAGE_FILE = "bot_replies.json"
 
-# Load / save persistent storage
+
+# ---------- SAFE JSON STORAGE ----------
 def load_data():
     try:
         with open(STORAGE_FILE, "r") as f:
-            return json.load(f)
-    except:
+            data = json.load(f)
+            print("Loaded storage:", data)
+            return data
+    except Exception as e:
+        print("LOAD FAILED:", e)
         return {}
 
+
 def save_data(data):
-    with open(STORAGE_FILE, "w") as f:
-        json.dump(data, f)
+    try:
+        with open(STORAGE_FILE, "w") as f:
+            json.dump(data, f)
+    except Exception as e:
+        print("SAVE FAILED:", e)
+
 
 BOT_REPLIES = load_data()
 
+
+# ---------- PLATFORM CONFIG ----------
 PLATFORMS = {
     "youtube": {
         "domains": {"youtube.com", "www.youtube.com", "m.youtube.com", "youtu.be", "www.youtu.be"},
@@ -45,6 +59,7 @@ PLATFORMS = {
 }
 
 
+# ---------- CORE LOGIC ----------
 def find_offending_urls(text: str):
     urls = URL_REGEX.findall(text)
     results = []
@@ -59,6 +74,7 @@ def find_offending_urls(text: str):
                 for param in data["tracking_params"]:
                     if param in query:
                         offending = f"{param}={query[param][0]}"
+
                         query_copy = query.copy()
                         query_copy.pop(param)
 
@@ -71,9 +87,12 @@ def find_offending_urls(text: str):
     return results
 
 
+# ---------- NEW MESSAGE ----------
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not update.message or not update.message.text:
         return
+
+    print("NEW MESSAGE:", update.message.text)
 
     offending = find_offending_urls(update.message.text)
 
@@ -96,30 +115,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             disable_web_page_preview=True
         )
 
-        # Store mapping
+        # store mapping
         chat_id = str(update.message.chat_id)
         msg_id = str(update.message.message_id)
 
         BOT_REPLIES.setdefault(chat_id, {})[msg_id] = bot_msg.message_id
         save_data(BOT_REPLIES)
 
+        print("Stored mapping:", chat_id, msg_id, "->", bot_msg.message_id)
 
+
+# ---------- EDITED MESSAGE ----------
 async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    print("EDIT HANDLER TRIGGERED")
+
     if not update.edited_message or not update.edited_message.text:
+        print("No edited message text")
         return
 
     chat_id = str(update.edited_message.chat_id)
     msg_id = str(update.edited_message.message_id)
     user_name = update.edited_message.from_user.full_name
 
+    print("EDIT TEXT:", update.edited_message.text)
+
     offending = find_offending_urls(update.edited_message.text)
 
-    print("EDIT DETECTED", chat_id, msg_id, "OFFENDING:", offending)
+    print("OFFENDING AFTER EDIT:", offending)
+    print("CURRENT STORAGE:", BOT_REPLIES)
 
     if chat_id in BOT_REPLIES and msg_id in BOT_REPLIES[chat_id]:
         bot_msg_id = BOT_REPLIES[chat_id][msg_id]
 
-        # If NO offending params remain → edit bot message
         if not offending:
             try:
                 await context.bot.edit_message_text(
@@ -128,7 +155,8 @@ async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TY
                     text=f"Thank you {user_name} for removing the trackers."
                 )
 
-                # remove mapping
+                print("Edited bot message successfully")
+
                 del BOT_REPLIES[chat_id][msg_id]
                 save_data(BOT_REPLIES)
 
@@ -136,6 +164,7 @@ async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TY
                 print("EDIT FAILED:", e)
 
 
+# ---------- MAIN ----------
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
