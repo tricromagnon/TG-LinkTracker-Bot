@@ -65,7 +65,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"<a href=\"{cleaned}\">{cleaned}</a>"
             for cleaned, off in offending
         ]
-        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines)
+        reply_text = "Please edit your comment to remove the tracking parameters:\n\n" + "\n".join(reply_lines) + "\n\nFailure to do so may result in your message being deleted."
         bot_msg = await update.message.reply_text(reply_text, parse_mode="HTML", disable_web_page_preview=True)
         
         # store mapping per chat
@@ -76,20 +76,25 @@ async def handle_edited_message(update: Update, context: ContextTypes.DEFAULT_TY
     if not update.edited_message or not update.edited_message.text:
         return
 
-    offending = find_offending_urls(update.edited_message.text)
     chat_id = update.edited_message.chat_id
     user_msg_id = update.edited_message.message_id
 
+    # Re-scan edited message for any offending parameters
+    offending = find_offending_urls(update.edited_message.text)
+
+    # If no offending parameters remain, delete bot message
     if chat_id in BOT_REPLIES and user_msg_id in BOT_REPLIES[chat_id]:
         bot_msg_id = BOT_REPLIES[chat_id][user_msg_id]
         if not offending:
             try:
+                # Delete the bot reply
                 await context.bot.delete_message(chat_id=chat_id, message_id=bot_msg_id)
-                # remove from mapping
+                # Remove from mapping
                 del BOT_REPLIES[chat_id][user_msg_id]
-            except Exception:
-                pass
-
+            except Exception as e:
+                # Could log the exception for debugging
+                print(f"Failed to delete bot message: {e}")
+                
 def main():
     app = ApplicationBuilder().token(TOKEN).build()
 
